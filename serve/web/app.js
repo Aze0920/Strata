@@ -1029,17 +1029,68 @@ function parseGithub(input) {
     return {owner, repo, ref: parts[3] || "", path: parts.slice(4).join("/")};
   return {owner, repo, ref: "", path: ""};
 }
+function pickSkillPaths(paths, subpath) {
+  if (subpath) {
+    const prefix = subpath.replace(/\/$/, "");
+    return paths.filter((p) => p === prefix || p.startsWith(prefix + "/"));
+  }
+  const groups = [
+    (list) => list.filter((p) => p.startsWith(".cursor/skills/")),
+    (list) => list.filter((p) => p.startsWith("skills/") || p.startsWith(".agents/skills/") || p.startsWith(".claude/skills/")),
+    (list) => list.filter((p) => /(^|\/)skill\/SKILL\.md$/.test(p)),
+    (list) => list.filter((p) => !p.includes("/node_modules/") && !p.includes("/dist/")),
+  ];
+  for (const g of groups) {
+    const hit = g(paths);
+    if (hit.length) return hit.slice(0, 20);
+  }
+  return [];
+}
+function walkSkillFiles(nodes, prefix, out) {
+  for (const n of nodes || []) {
+    const path = prefix ? `${prefix}/${n.name}` : n.name;
+    if (n.type === "directory") walkSkillFiles(n.files, path, out);
+    else out.push({path, size: n.size || 0});
+  }
+}
 async function loadGithubSkill(input) {
   const spec = parseGithub(input);
   if (!spec) {
     toast("warn", "Not a GitHub address", "Paste a link like https://github.com/owner/repo.");
     return [];
   }
-  const r = await fetch("skill", {method: "POST", headers: headers(true), body: JSON.stringify({url: input.trim()})});
-  let data = {};
-  try { data = await r.json(); } catch (e) { /* not json */ }
-  if (!r.ok) throw new Error((data.error && data.error.message) || ("HTTP " + r.status));
-  return data.skills || [];
+  // one catalog request, then the markdown files from the CDN. The GitHub API's 60-an-hour cap is what blocked the last try.
+  const ref = spec.ref || "main";
+  const meta = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${spec.owner}/${spec.repo}@${encodeURIComponent(ref)}`);
+  if (!meta.ok) throw new Error(meta.status === 404 ? "GitHub could not find that." : "Could not read that skill");
+  const catalog = await meta.json();
+  const blobs = [];
+  walkSkillFiles(catalog.files, "", blobs);
+  const skillPaths = pickSkillPaths(blobs.filter((t) => /(^|\/)SKILL\.md$/i.test(t.path)).map((t) => t.path), spec.path);
+  if (!skillPaths.length) throw new Error("No SKILL.md in that repo");
+  const loaded = [];
+  for (const skillPath of skillPaths) {
+    const dir = skillPath.includes("/") ? skillPath.slice(0, skillPath.lastIndexOf("/")) : "";
+    const prefix = dir ? dir + "/" : "";
+    const mds = blobs.filter((t) => t.path.startsWith(prefix) && /\.md$/i.test(t.path) && !t.path.includes("/scripts/") && t.size <= 180000);
+    const files = [];
+    for (let i = 0; i < mds.length; i += 6) {
+      const batch = mds.slice(i, i + 6);
+      const got = await Promise.all(batch.map(async (t) => {
+        const file = await fetch(`https://cdn.jsdelivr.net/gh/${spec.owner}/${spec.repo}@${encodeURIComponent(ref)}/${t.path}`);
+        if (!file.ok) throw new Error("Could not read that skill");
+        return {path: prefix ? t.path.slice(prefix.length) : t.path, text: await file.text()};
+      }));
+      files.push(...got);
+    }
+    const main = files.find((f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"));
+    if (!main) continue;
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(main.text);
+    const named = fm && /^name:\s*["']?(.+?)["']?\s*$/m.exec(fm[1]);
+    const name = (named && named[1].trim()) || dir.split("/").pop() || spec.repo;
+    loaded.push({name, source: `https://github.com/${spec.owner}/${spec.repo}/tree/${ref}/${dir}`, text: main.text, files});
+  }
+  return loaded;
 }
 $("skill-add").onclick = () => { $("skill-form").hidden = !$("skill-form").hidden; if (!$("skill-form").hidden) $("skill-url").focus(); };
 $("skill-form").onsubmit = async (e) => {
