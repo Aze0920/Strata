@@ -101,8 +101,7 @@ let health = {model: "strata", images: false, max_context: 0};
 async function loadHealth() {
   try {
     health = await (await fetch("health")).json();
-    $("attach-btn").title = health.images ? "Attach a text file or a picture (or drop it here)"
-                                          : "Attach a text file (or drop it here)";
+    $("attach-btn").title = "Attach a text file or a picture (or drop it here)";
     $("chat-empty-sub").textContent = `${health.model} runs on this PC. Nothing leaves it.`;
     $("tab-btn-images").hidden = !health.image_generation;
     if (location.hash === "#images" && health.image_generation) showTab("images");
@@ -728,7 +727,8 @@ function apiMessages() {
   const out = [];
   for (const m of messages) {
     if (m.role === "user") {
-      const imgs = (m.images || []).filter((i) => i.url);
+      // a server without the image encoder refuses any picture, so the chat keeps them and only the text goes
+      const imgs = health.images ? (m.images || []).filter((i) => i.url) : [];
       const text = userText(m);
       out.push({role: "user", content: imgs.length ? [{type: "text", text},
         ...imgs.map((i) => ({type: "image_url", image_url: {url: i.url}}))] : text});
@@ -909,17 +909,21 @@ function isTextFile(f) {
   return f.type.startsWith("text/") || /json|xml|javascript|yaml|toml|x-sh|x-python/.test(f.type) ||
          TEXT_EXT.test(f.name) || /(^|[\\/])(makefile|dockerfile|readme|license)$/i.test(f.name);
 }
+let textOnlyWarned = false;
 function addFiles(files) {
   for (const f of files) {
     if (f.type.startsWith("image/")) {
-      if (!health.images) { toast("warn", "Pictures are off", "This model was set up for text only."); continue; }
+      if (!health.images && !textOnlyWarned) {
+        textOnlyWarned = true;
+        toast("warn", "Pictures are off", "This model was set up for text only: the picture stays in the chat, but the model gets only the text.", 6000);
+      }
       if (f.size > 20e6) { toast("warn", "Picture too large", `${f.name} is over 20 MB.`); continue; }
       const r = new FileReader();
       r.onload = () => { attachments.push({kind: "image", name: f.name || "pasted image", url: r.result}); renderAttachments(); };
       r.readAsDataURL(f);
       continue;
     }
-    if (!isTextFile(f)) { toast("warn", "Not a text file", `${f.name}: attach text files (code, notes, logs, data)${health.images ? " or pictures" : ""}.`); continue; }
+    if (!isTextFile(f)) { toast("warn", "Not a text file", `${f.name}: attach text files (code, notes, logs, data) or pictures.`); continue; }
     if (f.size > MAX_TEXT_FILE) { toast("warn", "File too large", `${f.name} is over 512 KB.`); continue; }
     const r = new FileReader();
     r.onload = () => {
@@ -978,7 +982,6 @@ for (const id of ["chat", "composer"]) {
 }
 $("file").onchange = () => { addFiles($("file").files); $("file").value = ""; };
 $("input").addEventListener("paste", (e) => {
-  if (!health.images) return;
   const files = [...(e.clipboardData || {}).files || []].filter((f) => f.type.startsWith("image/"));
   if (files.length) { e.preventDefault(); addFiles(files); }
 });

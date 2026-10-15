@@ -12,6 +12,8 @@ main { flex: 1; min-height: 0; display: flex; }
 .st-header { position: relative; z-index: 2; flex: none; }
 .st-header .st-tabs { margin-left: var(--st-s-4); }
 #drawer-close .st-icon { transform: rotate(-90deg); }
+.st-lang { font-size: var(--st-fs-sm); font-weight: 700; }
+html[data-i18n-pending] body { visibility: hidden; }
 
 /* ---------------------------------------------------------------- chat */
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; }
