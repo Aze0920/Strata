@@ -1014,12 +1014,6 @@ function skillPrompt(skill, userText) {
   for (const f of extra) body += `\n\n---\n# ${f.path}\n\n${f.text}`;
   return body;
 }
-function b64utf8(s) {
-  const bin = atob(String(s || "").replace(/\s/g, ""));
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
-}
 function parseGithub(input) {
   let u;
   try { u = new URL(String(input || "").trim()); } catch (e) { return null; }
@@ -1035,65 +1029,17 @@ function parseGithub(input) {
     return {owner, repo, ref: parts[3] || "", path: parts.slice(4).join("/")};
   return {owner, repo, ref: "", path: ""};
 }
-async function gh(path) {
-  const r = await fetch("https://api.github.com" + path);
-  if (r.status === 403 || r.status === 429) throw new Error("GitHub is limiting requests. Wait a minute and try again.");
-  if (r.status === 404) throw new Error("GitHub could not find that.");
-  if (!r.ok) throw new Error("GitHub returned HTTP " + r.status);
-  return r.json();
-}
-function pickSkillPaths(paths, subpath) {
-  if (subpath) {
-    const prefix = subpath.replace(/\/$/, "");
-    return paths.filter((p) => p === prefix || p.startsWith(prefix + "/"));
-  }
-  const groups = [
-    (list) => list.filter((p) => p.startsWith(".cursor/skills/")),
-    (list) => list.filter((p) => p.startsWith("skills/") || p.startsWith(".agents/skills/") || p.startsWith(".claude/skills/")),
-    (list) => list.filter((p) => /(^|\/)skill\/SKILL\.md$/.test(p)),
-    (list) => list.filter((p) => !p.includes("/node_modules/") && !p.includes("/dist/")),
-  ];
-  for (const g of groups) {
-    const hit = g(paths);
-    if (hit.length) return hit.slice(0, 20);
-  }
-  return [];
-}
 async function loadGithubSkill(input) {
   const spec = parseGithub(input);
   if (!spec) {
     toast("warn", "Not a GitHub address", "Paste a link like https://github.com/owner/repo.");
     return [];
   }
-  const repo = await gh(`/repos/${spec.owner}/${spec.repo}`);
-  const ref = spec.ref || repo.default_branch || "main";
-  const tree = await gh(`/repos/${spec.owner}/${spec.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
-  const blobs = (tree.tree || []).filter((t) => t.type === "blob");
-  const skillPaths = pickSkillPaths(blobs.filter((t) => /(^|\/)SKILL\.md$/i.test(t.path)).map((t) => t.path), spec.path);
-  if (!skillPaths.length) throw new Error("No SKILL.md in that repo");
-  const loaded = [];
-  for (const skillPath of skillPaths) {
-    const dir = skillPath.includes("/") ? skillPath.slice(0, skillPath.lastIndexOf("/")) : "";
-    const prefix = dir ? dir + "/" : "";
-    const mds = blobs.filter((t) => t.path.startsWith(prefix) && /\.md$/i.test(t.path) && !t.path.includes("/scripts/") && (t.size || 0) <= 180000);
-    const files = [];
-    for (let i = 0; i < mds.length; i += 4) {
-      const batch = mds.slice(i, i + 4);
-      const got = await Promise.all(batch.map(async (t) => {
-        const blob = await gh(`/repos/${spec.owner}/${spec.repo}/git/blobs/${t.sha}`);
-        return {path: prefix ? t.path.slice(prefix.length) : t.path, text: b64utf8(blob.content)};
-      }));
-      files.push(...got);
-    }
-    const main = files.find((f) => /(^|\/)SKILL\.md$/i.test(f.path));
-    if (!main) continue;
-    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(main.text);
-    const named = fm && /^name:\s*["']?(.+?)["']?\s*$/m.exec(fm[1]);
-    const name = (named && named[1].trim()) || dir.split("/").pop() || spec.repo;
-    const source = `https://github.com/${spec.owner}/${spec.repo}/tree/${ref}/${dir}`;
-    loaded.push({name, source, text: main.text, files});
-  }
-  return loaded;
+  const r = await fetch("skill", {method: "POST", headers: headers(true), body: JSON.stringify({url: input.trim()})});
+  let data = {};
+  try { data = await r.json(); } catch (e) { /* not json */ }
+  if (!r.ok) throw new Error((data.error && data.error.message) || ("HTTP " + r.status));
+  return data.skills || [];
 }
 $("skill-add").onclick = () => { $("skill-form").hidden = !$("skill-form").hidden; if (!$("skill-form").hidden) $("skill-url").focus(); };
 $("skill-form").onsubmit = async (e) => {

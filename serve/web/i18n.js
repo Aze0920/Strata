@@ -26,6 +26,7 @@
     "Paste a link like https://github.com/owner/repo.": "贴一个类似 https://github.com/owner/repo 的链接。",
     "No SKILL.md in that repo": "这个仓库里没有 SKILL.md",
     "GitHub could not find that.": "GitHub 上找不到这个地址。",
+    "That repository is too large to import.": "这个仓库太大，装不进来。",
     "GitHub is limiting requests. Wait a minute and try again.": "GitHub 限制了请求次数，等一分钟再试。",
     "Could not read that skill": "读不到这个技能",
     "Could not save the skill": "技能没保存上",

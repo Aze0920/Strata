@@ -46,13 +46,16 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
+import io
+import zipfile
 from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator, Protocol
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -4982,6 +4985,123 @@ def body_limit() -> int:
     return mib << 20 if mib > 0 else CHUNKED_BODY_MAX
 
 
+_SKILL_FILE = re.compile(r"(^|/)SKILL\.md$", re.I)
+
+
+def _github_spec(url: str) -> dict | None:
+    """owner/repo plus an optional ref and path, from a github.com or raw link. Nothing else."""
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return None
+    host = (parts.hostname or "").removeprefix("www.")
+    segs = [s for s in parts.path.split("/") if s]
+    if host == "raw.githubusercontent.com":
+        if len(segs) < 3:
+            return None
+        return {"owner": segs[0], "repo": segs[1].removesuffix(".git"), "ref": segs[2], "path": "/".join(segs[3:])}
+    if host != "github.com" or len(segs) < 2:
+        return None
+    owner, repo = segs[0], segs[1].removesuffix(".git")
+    if len(segs) > 2 and segs[2] in ("tree", "blob"):
+        return {"owner": owner, "repo": repo, "ref": segs[3] if len(segs) > 3 else "", "path": "/".join(segs[4:])}
+    return {"owner": owner, "repo": repo, "ref": "", "path": ""}
+
+
+def _pick_skill_paths(paths: list[str], subpath: str) -> list[str]:
+    skills = [p for p in paths if _SKILL_FILE.search(p)]
+    if subpath:
+        prefix = subpath.strip("/")
+        return [p for p in skills if p == prefix or p.startswith(prefix + "/")]
+    groups = (
+        lambda xs: [p for p in xs if p.startswith(".cursor/skills/")],
+        lambda xs: [p for p in xs if p.startswith(("skills/", ".agents/skills/", ".claude/skills/"))],
+        lambda xs: [p for p in xs if p == "skill/SKILL.md" or p.endswith("/skill/SKILL.md")],
+        lambda xs: [p for p in xs if "/node_modules/" not in p and "/dist/" not in p],
+    )
+    for group in groups:
+        hit = group(skills)
+        if hit:
+            return hit[:20]
+    return []
+
+
+def _skill_name(text: str, fallback: str) -> str:
+    fm = re.match(r"^---\r?\n(.*?)\r?\n---", text, re.S)
+    named = re.search(r"^name:\s*[\"']?(.+?)[\"']?\s*$", fm.group(1), re.M) if fm else None
+    return named.group(1).strip() if named else fallback
+
+
+def _download_zip(spec: dict) -> bytes:
+    """One zip of the repo. The browser must not call the GitHub API once per file: that quota is 60 an hour."""
+    owner, repo, ref = spec["owner"], spec["repo"], spec["ref"]
+    if ref:
+        url = f"https://codeload.github.com/{owner}/{repo}/zip/{quote(ref, safe='')}"
+    else:
+        url = f"https://codeload.github.com/{owner}/{repo}/legacy.zip/HEAD"
+    req = urllib.request.Request(url, headers={"User-Agent": "strata"})
+    limit = 80 * 1024 * 1024
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            chunks, total = [], 0
+            while True:
+                block = resp.read(1024 * 1024)
+                if not block:
+                    break
+                total += len(block)
+                if total > limit:
+                    raise ValueError("That repository is too large to import.")
+                chunks.append(block)
+    except ValueError:
+        raise
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise ValueError("GitHub could not find that.") from e
+        raise ValueError("Could not read that skill") from e
+    except OSError as e:
+        raise ValueError("Could not read that skill") from e
+    return b"".join(chunks)
+
+
+def fetch_github_skills(url: str) -> list[dict]:
+    spec = _github_spec(url)
+    if not spec:
+        raise ValueError("Not a GitHub address")
+    with zipfile.ZipFile(io.BytesIO(_download_zip(spec))) as zf:
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+        if not names:
+            raise ValueError("No SKILL.md in that repo")
+        root = names[0].split("/")[0]
+        rels = [n.split("/", 1)[1] for n in names if n.startswith(root + "/")]
+        skill_paths = _pick_skill_paths(rels, spec["path"])
+        if not skill_paths:
+            raise ValueError("No SKILL.md in that repo")
+        loaded = []
+        for skill_path in skill_paths:
+            folder = skill_path.rsplit("/", 1)[0] if "/" in skill_path else ""
+            prefix = folder + "/" if folder else ""
+            files = []
+            for rel in rels:
+                if not rel.startswith(prefix) or not rel.lower().endswith(".md") or "/scripts/" in rel:
+                    continue
+                info = zf.getinfo(f"{root}/{rel}")
+                if info.file_size > 180_000:
+                    continue
+                files.append({"path": rel[len(prefix):] if prefix else rel,
+                              "text": zf.read(info).decode("utf-8", "replace")})
+            main = next((f for f in files if f["path"] == "SKILL.md" or f["path"].endswith("/SKILL.md")), None)
+            if not main:
+                continue
+            fallback = folder.rsplit("/", 1)[-1] if folder else spec["repo"]
+            ref = spec["ref"] or "HEAD"
+            loaded.append({"name": _skill_name(main["text"], fallback),
+                           "source": f"https://github.com/{spec['owner']}/{spec['repo']}/tree/{ref}/{folder}",
+                           "text": main["text"], "files": files})
+    if not loaded:
+        raise ValueError("No SKILL.md in that repo")
+    return loaded
+
+
 class BadBody(Exception):
     """A request body that cannot be read (a malformed or oversized chunked body): the status and the sentence."""
 
@@ -5432,6 +5552,9 @@ def make_handler(svc: Service):
             if path == "/update":
                 self._self_update()
                 return
+            if path == "/skill":
+                self._skill_post()
+                return
             if path == "/config":
                 self._config_post()
                 return
@@ -5670,6 +5793,24 @@ def make_handler(svc: Service):
             if not complete:
                 self._json(400, {"error": {"message": "incomplete control request body"}})
             return complete
+
+        def _skill_post(self):
+            if not self._own_page("a skill can be read"):
+                return
+            try:
+                req = json.loads(self._body() or b"{}")
+            except ValueError:
+                self._json(400, {"error": {"message": "send a JSON object"}})
+                return
+            if not isinstance(req, dict):
+                self._json(400, {"error": {"message": "send a JSON object"}})
+                return
+            try:
+                skills = fetch_github_skills(str(req.get("url") or ""))
+            except ValueError as e:
+                self._json(400, {"error": {"message": str(e)}})
+                return
+            self._json(200, {"skills": skills})
 
         def _own_page(self, what) -> bool:
             """Only JSON (a form or a "simple" cross-site request can't send it without a CORS preflight, which this
