@@ -8,6 +8,7 @@
     // header and tabs
     "Views": "视图", "Chat": "聊天", "Images": "图片", "Monitor": "监控", "About": "关于",
     "Connecting…": "连接中…", "Light / dark": "亮色 / 暗色", "Switch between light and dark": "切换亮色和暗色",
+    "Update": "更新", "Download the latest code and restart": "拉取最新代码并重启",
     "Idle": "空闲", "Server not reachable": "无法连接服务器", "API key needed": "需要 API 密钥",
     "Reading prompt": "读取提示词",
 

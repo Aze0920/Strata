@@ -1074,6 +1074,38 @@ $("s-apply").onclick = async () => {
   }
   toast("success", "Sampling saved", settings.temperature === 0 ? "Greedy: the same question gives the same answer." : "");
 };
+$("update-btn").onclick = async () => {
+  const zh = (document.documentElement.lang || "").toLowerCase().startsWith("zh");
+  const ask = zh
+    ? "从 GitHub 拉取最新代码并重启？网页会断开一两分钟，正在生成的回答会中断。"
+    : "Download the latest code and restart? The page drops for a minute or two, and a running reply stops.";
+  if (!confirm(ask)) return;
+  const btn = $("update-btn");
+  btn.disabled = true;
+  try {
+    const r = await fetch("update", {method: "POST", headers: headers(true), body: "{}"});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((j.error && j.error.message) || r.statusText);
+    toast("success", zh ? "开始更新" : "Updating",
+          zh ? "正在拉取代码并重启，网页会断开一会儿。" : "Pulling the code and restarting. The page will drop for a moment.");
+    let down = false;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 180000) {
+      await new Promise((s) => setTimeout(s, 2000));
+      try {
+        const h = await fetch("health", {cache: "no-store"});
+        if (h.ok && down) { location.reload(); return; }
+      } catch (e) { down = true; }
+    }
+    toast("error", zh ? "没有重启" : "It did not restart",
+          zh ? "拉取可能失败了，原因写在服务器的 /var/log/strata-update.log。"
+             : "The pull may have failed. See /var/log/strata-update.log on the server.", 8000);
+  } catch (e) {
+    toast("error", zh ? "更新失败" : "Update failed", String(e.message || e), 8000);
+  } finally {
+    btn.disabled = false;
+  }
+};
 $("sampling-btn").onclick = () => openDrawer(true);
 $("drawer-close").onclick = () => openDrawer(false);
 $("scrim").onclick = () => openDrawer(false);

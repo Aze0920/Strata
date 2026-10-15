@@ -5427,6 +5427,9 @@ def make_handler(svc: Service):
             if path == "/settings":
                 self._settings()
                 return
+            if path == "/update":
+                self._self_update()
+                return
             if path == "/config":
                 self._config_post()
                 return
@@ -5677,6 +5680,36 @@ def make_handler(svc: Service):
                                                       f"config's trusted_origins)"}})
                 return False
             return True
+
+        def _self_update(self):
+            """Pull this checkout and restart the strata service. The job runs in its own systemd unit, because
+            restarting the service kills this process and every child still in its cgroup."""
+            import shlex
+            if not self._own_page("Strata can be updated"):
+                return
+            if not (ROOT / ".git").is_dir():
+                self._json(400, {"error": {"message": "this copy of Strata is not a git checkout, so it cannot update itself"}})
+                return
+            if not os.path.isfile("/usr/bin/systemctl") or not os.path.isfile("/etc/systemd/system/strata.service"):
+                self._json(400, {"error": {"message": "updating from the page needs the strata systemd service on this machine"}})
+                return
+            log = "/var/log/strata-update.log"
+            script = (
+                "set -e\n"
+                f"cd {shlex.quote(str(ROOT))}\n"
+                f"echo \"---- $(date -Is)\" >> {shlex.quote(log)}\n"
+                f"git pull --ff-only >> {shlex.quote(log)} 2>&1\n"
+                "sleep 1\n"
+                "systemctl restart strata.service\n"
+            )
+            run = subprocess.run(
+                ["/usr/bin/systemd-run", "--collect", "--quiet", "/bin/sh", "-c", script],
+                capture_output=True, text=True, timeout=20)
+            if run.returncode != 0:
+                detail = (run.stderr or run.stdout or "systemd-run failed").strip()
+                self._json(500, {"error": {"message": f"could not start the update: {detail}"}})
+                return
+            self._json(202, {"status": "updating"})
 
         def _config_get(self):
             if not svc.config_path:
