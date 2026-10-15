@@ -576,15 +576,16 @@ function chatTitle(list) {
   const u = (list || []).find((m) => m.role === "user" && (m.text || "").trim());
   return u ? u.text.replace(/\s+/g, " ").trim().slice(0, 42) : "";
 }
-let skills = store.get("skills", []);
 let chats = store.get("chats", null);
 if (!Array.isArray(chats)) {
   const old = store.get("chat", []);
-  chats = [{id: uid(), title: chatTitle(old), skill: null, messages: old, updated: Date.now()}];
+  chats = [{id: uid(), title: chatTitle(old), messages: old, updated: Date.now()}];
 }
+try { localStorage.removeItem("strata.skills"); } catch (e) { /* already gone */ }
+for (const c of chats) delete c.skill;
 let chatId = store.get("chatId", "");
 if (!chats.some((c) => c.id === chatId)) {
-  if (!chats.length) chats.push({id: uid(), title: "", skill: null, messages: [], updated: Date.now()});
+  if (!chats.length) chats.push({id: uid(), title: "", messages: [], updated: Date.now()});
   chatId = chats[0].id;
 }
 let messages = (chats.find((c) => c.id === chatId) || chats[0]).messages || [];
@@ -607,7 +608,6 @@ function saveChat() {
   }
   store.set("chats", chats);
   store.set("chatId", chatId);
-  store.set("skills", skills);
   store.set("chat", kept);
   renderSide();
 }
@@ -615,20 +615,14 @@ function sideLabel(en, zhText) {
   try { return localStorage.getItem("strata.lang") === "zh" ? zhText : en; } catch (e) { return en; }
 }
 function renderSide() {
-  const chatsEl = $("side-chats"), skillsEl = $("side-skills");
-  const row = currentChat();
+  const chatsEl = $("side-chats");
   const ordered = chats.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
   const blank = sideLabel("New chat", "新对话");
   const remove = sideLabel("Remove", "移除");
   chatsEl.innerHTML = ordered.map((c) =>
     `<div class="side-item" data-chat="${c.id}" role="button" tabindex="0" aria-current="${c.id === chatId}">` +
     `<span class="side-item__title">${esc(c.title || blank)}</span>` +
-    (c.skill && c.skill.name ? `<span class="side-item__meta">${esc(c.skill.name)}</span>` : "") +
     `<button type="button" class="side-item__x" data-chat-x="${c.id}" title="${esc(remove)}" aria-label="${esc(remove)}">×</button></div>`).join("");
-  skillsEl.innerHTML = skills.map((s) =>
-    `<div class="side-item" data-skill="${s.id}" role="button" tabindex="0" aria-current="${!!(row && row.skill && row.skill.id === s.id)}">` +
-    `<span class="side-item__title" title="${esc(s.source || s.name)}">${esc(s.name)}</span>` +
-    `<button type="button" class="side-item__x" data-skill-x="${s.id}" title="${esc(remove)}" aria-label="${esc(remove)}">×</button></div>`).join("");
 }
 function openChat(id) {
   if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
@@ -649,7 +643,7 @@ function newChat() {
   const row = currentChat();
   if (row && !(row.messages || []).length && !row.title) { $("input").focus(); return; }
   const id = uid();
-  chats.unshift({id, title: "", skill: null, messages: [], updated: Date.now()});
+  chats.unshift({id, title: "", messages: [], updated: Date.now()});
   chatId = id;
   messages = [];
   store.set("chats", chats);
@@ -814,11 +808,6 @@ $("chat").addEventListener("toggle", (e) => {
 
 function apiMessages() {
   const out = [];
-  const row = currentChat();
-  const skill = row && row.skill;
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const skillText = skillPrompt(skill, lastUser && lastUser.text);
-  if (skillText) out.push({role: "system", content: skillText});
   for (const m of messages) {
     if (m.role === "user") {
       // a server without the image encoder refuses any picture, so the chat keeps them and only the text goes
@@ -983,7 +972,7 @@ $("side-chats").onclick = (e) => {
     if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
     const id = x.dataset.chatX;
     chats = chats.filter((c) => c.id !== id);
-    if (!chats.length) chats.push({id: uid(), title: "", skill: null, messages: [], updated: Date.now()});
+    if (!chats.length) chats.push({id: uid(), title: "", messages: [], updated: Date.now()});
     if (id === chatId) { chatId = chats[0].id; messages = chats[0].messages || []; renderChat(); }
     store.set("chats", chats);
     store.set("chatId", chatId);
@@ -992,156 +981,6 @@ $("side-chats").onclick = (e) => {
   }
   const row = e.target.closest("[data-chat]");
   if (row) openChat(row.dataset.chat);
-};
-function skillPrompt(skill, userText) {
-  if (!skill || !(skill.text || "").trim()) return "";
-  const low = (userText || "").toLowerCase();
-  const extra = [];
-  let budget = 80000;
-  for (const f of skill.files || []) {
-    if (!f || !f.path || !f.text || /(^|\/)SKILL\.md$/i.test(f.path)) continue;
-    const base = f.path.split("/").pop().replace(/\.md$/i, "").toLowerCase();
-    if (base.length < 3) continue;
-    const re = new RegExp("(?:^|[^a-z0-9])" + base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:$|[^a-z0-9])");
-    if (!re.test(low) || f.text.length > budget) continue;
-    extra.push(f);
-    budget -= f.text.length;
-    if (extra.length >= 4) break;
-  }
-  let body = `Skill "${skill.name}"${skill.source ? ` from ${skill.source}` : ""}. Follow the skill file below. ` +
-    "This chat cannot run the skill's scripts, hooks, or browser tools; when a step needs one of those, say so and follow the written instructions instead.\n\n" +
-    skill.text.trim();
-  for (const f of extra) body += `\n\n---\n# ${f.path}\n\n${f.text}`;
-  return body;
-}
-function parseGithub(input) {
-  let u;
-  try { u = new URL(String(input || "").trim()); } catch (e) { return null; }
-  const host = u.hostname.replace(/^www\./, "");
-  const parts = u.pathname.split("/").filter(Boolean);
-  if (host === "raw.githubusercontent.com") {
-    if (parts.length < 3) return null;
-    return {owner: parts[0], repo: parts[1].replace(/\.git$/, ""), ref: parts[2], path: parts.slice(3).join("/")};
-  }
-  if (host !== "github.com" || parts.length < 2) return null;
-  const owner = parts[0], repo = parts[1].replace(/\.git$/, "");
-  if (parts[2] === "tree" || parts[2] === "blob")
-    return {owner, repo, ref: parts[3] || "", path: parts.slice(4).join("/")};
-  return {owner, repo, ref: "", path: ""};
-}
-function pickSkillPaths(paths, subpath) {
-  if (subpath) {
-    const prefix = subpath.replace(/\/$/, "");
-    return paths.filter((p) => p === prefix || p.startsWith(prefix + "/"));
-  }
-  const groups = [
-    (list) => list.filter((p) => p.startsWith(".cursor/skills/")),
-    (list) => list.filter((p) => p.startsWith("skills/") || p.startsWith(".agents/skills/") || p.startsWith(".claude/skills/")),
-    (list) => list.filter((p) => /(^|\/)skill\/SKILL\.md$/.test(p)),
-    (list) => list.filter((p) => !p.includes("/node_modules/") && !p.includes("/dist/")),
-  ];
-  for (const g of groups) {
-    const hit = g(paths);
-    if (hit.length) return hit.slice(0, 20);
-  }
-  return [];
-}
-function walkSkillFiles(nodes, prefix, out) {
-  for (const n of nodes || []) {
-    const path = prefix ? `${prefix}/${n.name}` : n.name;
-    if (n.type === "directory") walkSkillFiles(n.files, path, out);
-    else out.push({path, size: n.size || 0});
-  }
-}
-async function loadGithubSkill(input) {
-  const spec = parseGithub(input);
-  if (!spec) {
-    toast("warn", "Not a GitHub address", "Paste a link like https://github.com/owner/repo.");
-    return [];
-  }
-  // one catalog request, then the markdown files from the CDN. The GitHub API's 60-an-hour cap is what blocked the last try.
-  const ref = spec.ref || "main";
-  const meta = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${spec.owner}/${spec.repo}@${encodeURIComponent(ref)}`);
-  if (!meta.ok) throw new Error(meta.status === 404 ? "GitHub could not find that." : "Could not read that skill");
-  const catalog = await meta.json();
-  const blobs = [];
-  walkSkillFiles(catalog.files, "", blobs);
-  const skillPaths = pickSkillPaths(blobs.filter((t) => /(^|\/)SKILL\.md$/i.test(t.path)).map((t) => t.path), spec.path);
-  if (!skillPaths.length) throw new Error("No SKILL.md in that repo");
-  const loaded = [];
-  for (const skillPath of skillPaths) {
-    const dir = skillPath.includes("/") ? skillPath.slice(0, skillPath.lastIndexOf("/")) : "";
-    const prefix = dir ? dir + "/" : "";
-    const mds = blobs.filter((t) => t.path.startsWith(prefix) && /\.md$/i.test(t.path) && !t.path.includes("/scripts/") && t.size <= 180000);
-    const files = [];
-    for (let i = 0; i < mds.length; i += 6) {
-      const batch = mds.slice(i, i + 6);
-      const got = await Promise.all(batch.map(async (t) => {
-        const file = await fetch(`https://cdn.jsdelivr.net/gh/${spec.owner}/${spec.repo}@${encodeURIComponent(ref)}/${t.path}`);
-        if (!file.ok) throw new Error("Could not read that skill");
-        return {path: prefix ? t.path.slice(prefix.length) : t.path, text: await file.text()};
-      }));
-      files.push(...got);
-    }
-    const main = files.find((f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"));
-    if (!main) continue;
-    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(main.text);
-    const named = fm && /^name:\s*["']?(.+?)["']?\s*$/m.exec(fm[1]);
-    const name = (named && named[1].trim()) || dir.split("/").pop() || spec.repo;
-    loaded.push({name, source: `https://github.com/${spec.owner}/${spec.repo}/tree/${ref}/${dir}`, text: main.text, files});
-  }
-  return loaded;
-}
-$("skill-add").onclick = () => { $("skill-form").hidden = !$("skill-form").hidden; if (!$("skill-form").hidden) $("skill-url").focus(); };
-$("skill-form").onsubmit = async (e) => {
-  e.preventDefault();
-  const url = $("skill-url").value.trim();
-  if (!url || $("skill-save").disabled) return;
-  $("skill-save").disabled = true;
-  $("skill-save").textContent = "Reading the skill…";
-  try {
-    const loaded = await loadGithubSkill(url);
-    if (!loaded.length) return;
-    for (const s of loaded) {
-      const prev = skills.find((x) => x.source === s.source && x.name === s.name);
-      if (prev) Object.assign(prev, s);
-      else skills.push({id: uid(), ...s});
-    }
-    try { localStorage.setItem("strata.skills", JSON.stringify(skills)); }
-    catch (err) {
-      toast("error", "Could not save the skill", "This browser ran out of space for it.");
-      return;
-    }
-    $("skill-url").value = "";
-    $("skill-form").hidden = true;
-    renderSide();
-    toast("info", "Added", loaded.map((s) => s.name).join(", "));
-  } catch (err) {
-    toast("error", "Could not read that skill", err.message || String(err), 6000);
-  } finally {
-    $("skill-save").disabled = false;
-    $("skill-save").textContent = "Add skill";
-  }
-};
-$("side-skills").onclick = (e) => {
-  const x = e.target.closest("[data-skill-x]");
-  if (x) {
-    const id = x.dataset.skillX;
-    skills = skills.filter((s) => s.id !== id);
-    store.set("skills", skills);
-    renderSide();
-    return;
-  }
-  const hit = e.target.closest("[data-skill]");
-  if (!hit) return;
-  const cur = currentChat();
-  const picked = skills.find((s) => s.id === hit.dataset.skill);
-  if (!cur || !picked) return;
-  const on = !(cur.skill && cur.skill.id === picked.id);
-  cur.skill = on ? {id: picked.id, name: picked.name, text: picked.text, files: picked.files || [], source: picked.source || ""} : null;
-  store.set("chats", chats);
-  renderSide();
-  toast("info", on ? "Skill on" : "Skill off", picked.name);
 };
 $("export-btn").onclick = () => {
   if (!messages.length) { toast("info", "Nothing to save yet"); return; }
