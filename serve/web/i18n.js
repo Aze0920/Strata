@@ -69,6 +69,33 @@
     "Settings": "设置", "API key": "API 密钥", "only if the server was started with one": "仅当服务器启动时设置了密钥才需要",
     "Not needed": "不需要", "Dark theme": "暗色主题", "Chats, settings and the key are kept in this browser only.": "对话、设置和密钥只保存在这个浏览器里。",
     "Strata on GitHub": "Strata 的 GitHub", "Model settings": "模型设置", "Save": "保存", "Nothing changed.": "没有改动。",
+    "Default temperature for requests that send none (0 = greedy, the default without a sampling block)":
+      "没单独指定温度时用这个值（0 = 每次都选最可能的字，也是不写采样参数时的默认）",
+    "Default top_p for requests that send none": "没单独指定 top_p 时用这个值",
+    "Default top_k for requests that send none (1-64)": "没单独指定 top_k 时用这个值（1 到 64）",
+    "Default min_p for requests that send none": "没单独指定 min_p 时用这个值",
+    "Cap the thinking of every request at this many tokens (0 or empty: no cap)":
+      "每次思考最多用这么多个 token（0 或留空：不限制）",
+    "Shorten a max_tokens that does not fit the context instead of answering 400":
+      "要求的长度超过上下文时，自动缩短，而不是直接返回 400 错误",
+    "Anthropic requests that do not ask for thinking: think as the model does (model) or not (on_request)":
+      "Anthropic 接口没要求思考时：按模型自己的方式思考（跟随模型），或只有请求里写了才思考（仅在请求里要求时）",
+    "Where a non-default reasoning effort goes: start (the default) or end (keeps the cache when it changes)":
+      "非默认的思考强度写在提示词的哪里：开头（默认），或末尾（改强度时还能用上缓存）",
+    "Other model names the server lists and answers to (comma-separated)":
+      "服务器另外承认的模型名，用逗号隔开",
+    "Unload the model after this many seconds without requests (0 or empty: never)":
+      "这么多秒没有请求就卸掉模型（0 或留空：一直留在内存里）",
+    "Start without loading the model; the first request loads it (text only)":
+      "启动时先不加载模型，第一次请求再加载（仅文本）",
+    "End a request when the engine says nothing for this long (default 300 s, 0 = wait)":
+      "引擎这么长时间没有任何输出就结束这次请求（默认 300 秒，0 = 一直等）",
+    "Keep the last 100 requests' prompts and answers in memory for /api-monitor":
+      "在内存里保留最近 100 次请求的问题和回答，供 /api-monitor 查看",
+    "Open the chat page in the browser when the model is ready": "模型准备好后，在浏览器里打开聊天页",
+    "VRAM in MiB the engine leaves free for other programs (engine default 700)":
+      "留给其他程序的显存，单位 MB（引擎默认 700）",
+    "model": "跟随模型", "on_request": "仅在请求里要求时", "start": "开头", "end": "末尾",
     "Kept in the model's run config for every client. An empty field is the default. They take effect the next time the model starts (close Strata's window and start it again).":
       "保存在模型的运行配置里，对所有客户端生效。留空就是默认值。下次启动模型时生效（关闭 Strata 窗口后重新启动）。",
     "default": "默认", "on": "开", "off": "关", "Model": "模型", "Engine": "引擎", "built from source": "源码编译",

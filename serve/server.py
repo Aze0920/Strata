@@ -5686,28 +5686,36 @@ def make_handler(svc: Service):
         def _git(self, *args, timeout=60):
             return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=timeout)
 
-        def _local_version(self) -> dict:
-            """The short git commit of this checkout. Empty when the folder is not a git checkout."""
-            if not (ROOT / ".git").is_dir():
-                return {"version": "", "commit": ""}
-            full = self._git("rev-parse", "HEAD")
-            short = self._git("rev-parse", "--short", "HEAD")
-            if full.returncode != 0 or short.returncode != 0:
-                return {"version": "", "commit": ""}
-            return {"version": short.stdout.strip(), "commit": full.stdout.strip()}
+        def _version_text(self) -> str:
+            """The A.B.C number in VERSION. Empty when the file is missing."""
+            path = ROOT / "VERSION"
+            if not path.is_file():
+                return ""
+            line = path.read_text(encoding="utf-8").strip().splitlines()
+            return line[0].strip() if line else ""
 
-        def _remote_commit(self) -> str:
-            """origin's branch for this checkout, after the caller has fetched."""
-            for ref in ("@{upstream}", "origin/main"):
-                found = self._git("rev-parse", ref)
-                if found.returncode == 0:
-                    return found.stdout.strip()
-            return ""
+        def _local_version(self) -> dict:
+            commit = ""
+            if (ROOT / ".git").is_dir():
+                full = self._git("rev-parse", "HEAD")
+                if full.returncode == 0:
+                    commit = full.stdout.strip()
+            return {"version": self._version_text(), "commit": commit}
+
+        def _remote_version(self) -> str:
+            """The VERSION file on the upstream branch, after the caller has fetched."""
+            ref = self._git("rev-parse", "--abbrev-ref", "@{upstream}")
+            name = ref.stdout.strip() if ref.returncode == 0 and ref.stdout.strip() else "origin/main"
+            shown = self._git("show", f"{name}:VERSION")
+            if shown.returncode != 0:
+                return ""
+            line = shown.stdout.strip().splitlines()
+            return line[0].strip() if line else ""
 
         def _self_update(self):
-            """Fetch this checkout's origin. The same commit does nothing. A newer one is pulled and the strata
-            service restarted, and only when the page asked to apply it. The job runs in its own systemd unit,
-            because restarting the service kills this process and every child still in its cgroup."""
+            """Fetch this checkout's origin. The same VERSION number does nothing. A different number is pulled
+            and the strata service restarted, and only when the page asked to apply it. The job runs in its own
+            systemd unit, because restarting the service kills this process and every child still in its cgroup."""
             import shlex
             if not self._own_page("Strata can be updated"):
                 return
@@ -5724,19 +5732,15 @@ def make_handler(svc: Service):
                 detail = (fetched.stderr or fetched.stdout or "git fetch failed").strip()
                 self._json(500, {"error": {"message": f"could not reach the git remote: {detail}"}})
                 return
-            local = self._git("rev-parse", "HEAD")
-            remote = self._remote_commit()
-            if local.returncode != 0 or not remote:
+            here, there = self._version_text(), self._remote_version()
+            if not here or not there:
                 self._json(500, {"error": {"message": "could not read the local or the remote version"}})
                 return
-            here, there = local.stdout.strip(), remote
-            short = self._git("rev-parse", "--short", here).stdout.strip() or here[:7]
-            far = self._git("rev-parse", "--short", there).stdout.strip() or there[:7]
             if here == there:
-                self._json(200, {"status": "current", "version": short})
+                self._json(200, {"status": "current", "version": here})
                 return
             if not body.get("apply"):
-                self._json(200, {"status": "available", "version": short, "remote": far})
+                self._json(200, {"status": "available", "version": here, "remote": there})
                 return
             if not os.path.isfile("/usr/bin/systemctl") or not os.path.isfile("/etc/systemd/system/strata.service"):
                 self._json(400, {"error": {"message": "updating from the page needs the strata systemd service on this machine"}})
@@ -5757,7 +5761,7 @@ def make_handler(svc: Service):
                 detail = (run.stderr or run.stdout or "systemd-run failed").strip()
                 self._json(500, {"error": {"message": f"could not start the update: {detail}"}})
                 return
-            self._json(202, {"status": "updating", "version": short, "remote": far})
+            self._json(202, {"status": "updating", "version": here, "remote": there})
 
         def _config_get(self):
             if not svc.config_path:
