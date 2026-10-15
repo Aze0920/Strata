@@ -105,9 +105,19 @@ async function loadHealth() {
     $("chat-empty-sub").textContent = `${health.model} runs on this PC. Nothing leaves it.`;
     $("tab-btn-images").hidden = !health.image_generation;
     if (location.hash === "#images" && health.image_generation) showTab("images");
+    loadVersion();
   } catch (e) {
     setTimeout(loadHealth, 2000);
   }
+}
+async function loadVersion() {
+  try {
+    const v = await (await fetch("version", {cache: "no-store"})).json();
+    const el = $("ver");
+    el.textContent = v.version || "";
+    const zh = (document.documentElement.lang || "").toLowerCase().startsWith("zh");
+    el.title = v.version ? (zh ? "当前版本 " : "This copy ") + v.version : "";
+  } catch (e) { /* an older server has no version */ }
 }
 
 // ------------------------------------------------------------------ Monitor
@@ -1076,16 +1086,31 @@ $("s-apply").onclick = async () => {
 };
 $("update-btn").onclick = async () => {
   const zh = (document.documentElement.lang || "").toLowerCase().startsWith("zh");
-  const ask = zh
-    ? "从 GitHub 拉取最新代码并重启？网页会断开一两分钟，正在生成的回答会中断。"
-    : "Download the latest code and restart? The page drops for a minute or two, and a running reply stops.";
-  if (!confirm(ask)) return;
   const btn = $("update-btn");
   btn.disabled = true;
+  const post = (apply) => fetch("update", {method: "POST", headers: headers(true), body: JSON.stringify({apply})});
   try {
-    const r = await fetch("update", {method: "POST", headers: headers(true), body: "{}"});
-    const j = await r.json().catch(() => ({}));
+    let r = await post(false);
+    let j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error((j.error && j.error.message) || r.statusText);
+    if (j.status === "current") {
+      if (j.version) $("ver").textContent = j.version;
+      toast("success", zh ? "已是最新" : "Already current", j.version || "");
+      btn.disabled = false;
+      return;
+    }
+    const ask = zh
+      ? `发现新版本 ${j.remote}，当前是 ${j.version}。拉取并重启？网页会断开一两分钟，正在生成的回答会中断。`
+      : `New version ${j.remote}, this copy is ${j.version}. Download and restart? The page drops for a minute or two, and a running reply stops.`;
+    if (!confirm(ask)) { btn.disabled = false; return; }
+    r = await post(true);
+    j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((j.error && j.error.message) || r.statusText);
+    if (j.status === "current") {
+      toast("success", zh ? "已是最新" : "Already current", j.version || "");
+      btn.disabled = false;
+      return;
+    }
     toast("success", zh ? "开始更新" : "Updating",
           zh ? "正在拉取代码并重启，网页会断开一会儿。" : "Pulling the code and restarting. The page will drop for a moment.");
     let down = false;

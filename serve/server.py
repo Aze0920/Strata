@@ -5334,6 +5334,8 @@ def make_handler(svc: Service):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif path == "/version":
+                self._json(200, self._local_version())
             elif path in ("/health", "/api/health"):
                 self._json(200, {"status": "ok", "max_context": svc.reported_ctx(), "model": svc.model,
                                  "images": svc.vision is not None, "api_key": bool(svc.api_key),
@@ -5681,14 +5683,60 @@ def make_handler(svc: Service):
                 return False
             return True
 
+        def _git(self, *args, timeout=60):
+            return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=timeout)
+
+        def _local_version(self) -> dict:
+            """The short git commit of this checkout. Empty when the folder is not a git checkout."""
+            if not (ROOT / ".git").is_dir():
+                return {"version": "", "commit": ""}
+            full = self._git("rev-parse", "HEAD")
+            short = self._git("rev-parse", "--short", "HEAD")
+            if full.returncode != 0 or short.returncode != 0:
+                return {"version": "", "commit": ""}
+            return {"version": short.stdout.strip(), "commit": full.stdout.strip()}
+
+        def _remote_commit(self) -> str:
+            """origin's branch for this checkout, after the caller has fetched."""
+            for ref in ("@{upstream}", "origin/main"):
+                found = self._git("rev-parse", ref)
+                if found.returncode == 0:
+                    return found.stdout.strip()
+            return ""
+
         def _self_update(self):
-            """Pull this checkout and restart the strata service. The job runs in its own systemd unit, because
-            restarting the service kills this process and every child still in its cgroup."""
+            """Fetch this checkout's origin. The same commit does nothing. A newer one is pulled and the strata
+            service restarted, and only when the page asked to apply it. The job runs in its own systemd unit,
+            because restarting the service kills this process and every child still in its cgroup."""
             import shlex
             if not self._own_page("Strata can be updated"):
                 return
             if not (ROOT / ".git").is_dir():
                 self._json(400, {"error": {"message": "this copy of Strata is not a git checkout, so it cannot update itself"}})
+                return
+            try:
+                body = json.loads(self._body().decode() or "{}")
+            except (json.JSONDecodeError, UnicodeError):
+                self._json(400, {"error": {"message": "the update request is not valid JSON"}})
+                return
+            fetched = self._git("fetch", "origin", timeout=120)
+            if fetched.returncode != 0:
+                detail = (fetched.stderr or fetched.stdout or "git fetch failed").strip()
+                self._json(500, {"error": {"message": f"could not reach the git remote: {detail}"}})
+                return
+            local = self._git("rev-parse", "HEAD")
+            remote = self._remote_commit()
+            if local.returncode != 0 or not remote:
+                self._json(500, {"error": {"message": "could not read the local or the remote version"}})
+                return
+            here, there = local.stdout.strip(), remote
+            short = self._git("rev-parse", "--short", here).stdout.strip() or here[:7]
+            far = self._git("rev-parse", "--short", there).stdout.strip() or there[:7]
+            if here == there:
+                self._json(200, {"status": "current", "version": short})
+                return
+            if not body.get("apply"):
+                self._json(200, {"status": "available", "version": short, "remote": far})
                 return
             if not os.path.isfile("/usr/bin/systemctl") or not os.path.isfile("/etc/systemd/system/strata.service"):
                 self._json(400, {"error": {"message": "updating from the page needs the strata systemd service on this machine"}})
@@ -5709,7 +5757,7 @@ def make_handler(svc: Service):
                 detail = (run.stderr or run.stdout or "systemd-run failed").strip()
                 self._json(500, {"error": {"message": f"could not start the update: {detail}"}})
                 return
-            self._json(202, {"status": "updating"})
+            self._json(202, {"status": "updating", "version": short, "remote": far})
 
         def _config_get(self):
             if not svc.config_path:

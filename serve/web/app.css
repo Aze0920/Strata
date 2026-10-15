@@ -14,6 +14,7 @@ main { flex: 1; min-height: 0; display: flex; }
 #drawer-close .st-icon { transform: rotate(-90deg); }
 .st-lang, .st-update { font-size: var(--st-fs-sm); font-weight: 700; }
 .st-update { width: auto; padding: 0 0.7rem; }
+.st-ver { font-size: var(--st-fs-xs); color: var(--st-ink-muted); font-variant-numeric: tabular-nums; padding-right: 0.35rem; }
 html[data-i18n-pending] body { visibility: hidden; }
 
 /* ---------------------------------------------------------------- chat */
