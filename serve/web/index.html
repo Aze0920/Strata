@@ -53,6 +53,19 @@
 <main>
   <!-- ============================ Chat ============================ -->
   <section class="view view--chat" id="view-chat" role="tabpanel" aria-labelledby="tab-btn-chat">
+    <aside class="side" id="side">
+      <button type="button" class="side-new" id="side-new">New chat</button>
+      <div class="side-label">Chats</div>
+      <div class="side-list" id="side-chats" data-i18n-skip></div>
+      <div class="side-label">Skills<button type="button" class="side-plus" id="skill-add" title="Add a skill" aria-label="Add a skill">+</button></div>
+      <form class="skill-form" id="skill-form" hidden>
+        <input class="st-input" id="skill-name" placeholder="Skill name" aria-label="Skill name" maxlength="40">
+        <textarea class="st-input" id="skill-text" rows="4" placeholder="What this skill should make the model do" aria-label="What this skill should make the model do"></textarea>
+        <button type="submit" class="st-btn st-btn--primary">Save skill</button>
+      </form>
+      <div class="side-list" id="side-skills" data-i18n-skip></div>
+    </aside>
+    <div class="chat-main">
     <div class="chat-scroll" id="chat-scroll">
       <div class="chat" id="chat">
         <div class="chat-empty" id="chat-empty">
@@ -83,6 +96,7 @@
             <svg class="st-icon"><use href="web/sprite.svg#i-send"/></svg></button>
         </div>
       </form>
+    </div>
     </div>
   </section>
 

@@ -571,13 +571,92 @@ function markdown(text) {
 // ------------------------------------------------------------------ Chat
 const DEFAULTS = {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, max: "", seed: "", show: true, esp: true, mcp: true};
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
-let messages = store.get("chat", []);
+function uid() { return Math.random().toString(36).slice(2, 10); }
+function chatTitle(list) {
+  const u = (list || []).find((m) => m.role === "user" && (m.text || "").trim());
+  return u ? u.text.replace(/\s+/g, " ").trim().slice(0, 42) : "";
+}
+let skills = store.get("skills", []);
+let chats = store.get("chats", null);
+if (!Array.isArray(chats)) {
+  const old = store.get("chat", []);
+  chats = [{id: uid(), title: chatTitle(old), skill: null, messages: old, updated: Date.now()}];
+}
+let chatId = store.get("chatId", "");
+if (!chats.some((c) => c.id === chatId)) {
+  if (!chats.length) chats.push({id: uid(), title: "", skill: null, messages: [], updated: Date.now()});
+  chatId = chats[0].id;
+}
+let messages = (chats.find((c) => c.id === chatId) || chats[0]).messages || [];
 let attachments = [];                 // {name, url}
 let busy = null;                      // {controller, msg}
 
+function slim(list) {
+  return list.map((m) => ({...m, images: (m.images || []).map((i) => ({name: i.name})),
+                              files: (m.files || []).map((f) => ({name: f.name}))}));
+}
+function currentChat() { return chats.find((c) => c.id === chatId); }
 function saveChat() {
-  store.set("chat", messages.map((m) => ({...m, images: (m.images || []).map((i) => ({name: i.name})),
-                                           files: (m.files || []).map((f) => ({name: f.name}))})));
+  const kept = slim(messages);
+  const row = currentChat();
+  if (row) {
+    row.messages = kept;
+    row.updated = Date.now();
+    const title = chatTitle(kept);
+    if (title) row.title = title;
+  }
+  store.set("chats", chats);
+  store.set("chatId", chatId);
+  store.set("skills", skills);
+  store.set("chat", kept);
+  renderSide();
+}
+function sideLabel(en, zhText) {
+  try { return localStorage.getItem("strata.lang") === "zh" ? zhText : en; } catch (e) { return en; }
+}
+function renderSide() {
+  const chatsEl = $("side-chats"), skillsEl = $("side-skills");
+  const row = currentChat();
+  const ordered = chats.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  const blank = sideLabel("New chat", "新对话");
+  const remove = sideLabel("Remove", "移除");
+  chatsEl.innerHTML = ordered.map((c) =>
+    `<div class="side-item" data-chat="${c.id}" role="button" tabindex="0" aria-current="${c.id === chatId}">` +
+    `<span class="side-item__title">${esc(c.title || blank)}</span>` +
+    (c.skill && c.skill.name ? `<span class="side-item__meta">${esc(c.skill.name)}</span>` : "") +
+    `<button type="button" class="side-item__x" data-chat-x="${c.id}" title="${esc(remove)}" aria-label="${esc(remove)}">×</button></div>`).join("");
+  skillsEl.innerHTML = skills.map((s) =>
+    `<div class="side-item" data-skill="${s.id}" role="button" tabindex="0" aria-current="${!!(row && row.skill && row.skill.id === s.id)}">` +
+    `<span class="side-item__title">${esc(s.name)}</span>` +
+    `<button type="button" class="side-item__x" data-skill-x="${s.id}" title="${esc(remove)}" aria-label="${esc(remove)}">×</button></div>`).join("");
+}
+function openChat(id) {
+  if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
+  if (id === chatId) return;
+  saveChat();
+  const next = chats.find((c) => c.id === id);
+  if (!next) return;
+  chatId = id;
+  messages = next.messages || [];
+  store.set("chatId", chatId);
+  renderChat();
+  renderSide();
+  $("input").focus();
+}
+function newChat() {
+  if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
+  saveChat();
+  const row = currentChat();
+  if (row && !(row.messages || []).length && !row.title) { $("input").focus(); return; }
+  const id = uid();
+  chats.unshift({id, title: "", skill: null, messages: [], updated: Date.now()});
+  chatId = id;
+  messages = [];
+  store.set("chats", chats);
+  store.set("chatId", chatId);
+  renderChat();
+  renderSide();
+  $("input").focus();
 }
 function timeStr(t) { return new Date(t).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}); }
 
@@ -735,6 +814,9 @@ $("chat").addEventListener("toggle", (e) => {
 
 function apiMessages() {
   const out = [];
+  const row = currentChat();
+  const skill = row && row.skill;
+  if (skill && (skill.text || "").trim()) out.push({role: "system", content: skill.text.trim()});
   for (const m of messages) {
     if (m.role === "user") {
       // a server without the image encoder refuses any picture, so the chat keeps them and only the text goes
@@ -792,6 +874,7 @@ async function send() {
   autosize();
   const m = {role: "assistant", text: "", reasoning: "", time: Date.now()};
   messages.push(m);
+  saveChat();
   renderChat();
   const el = $("chat").lastElementChild;
   const controller = new AbortController();
@@ -889,14 +972,55 @@ $("input").addEventListener("keydown", (e) => {
 function autosize() { const t = $("input"); t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, innerHeight * 0.4)}px`; }
 $("input").addEventListener("input", autosize);
 
-$("new-btn").onclick = () => {
-  if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
-  if (!messages.length) return;
-  const backup = messages;
-  messages = [];
-  saveChat();
-  renderChat();
-  toast("info", "New chat", "The last one was cleared.", 6000, {label: "Undo", run: () => { messages = backup; saveChat(); renderChat(); }});
+$("new-btn").onclick = () => newChat();
+$("side-new").onclick = () => newChat();
+$("side-chats").onclick = (e) => {
+  const x = e.target.closest("[data-chat-x]");
+  if (x) {
+    e.stopPropagation();
+    if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
+    const id = x.dataset.chatX;
+    chats = chats.filter((c) => c.id !== id);
+    if (!chats.length) chats.push({id: uid(), title: "", skill: null, messages: [], updated: Date.now()});
+    if (id === chatId) { chatId = chats[0].id; messages = chats[0].messages || []; renderChat(); }
+    store.set("chats", chats);
+    store.set("chatId", chatId);
+    renderSide();
+    return;
+  }
+  const row = e.target.closest("[data-chat]");
+  if (row) openChat(row.dataset.chat);
+};
+$("skill-add").onclick = () => { $("skill-form").hidden = !$("skill-form").hidden; if (!$("skill-form").hidden) $("skill-name").focus(); };
+$("skill-form").onsubmit = (e) => {
+  e.preventDefault();
+  const name = $("skill-name").value.trim();
+  const text = $("skill-text").value.trim();
+  if (!name || !text) return;
+  skills.push({id: uid(), name, text});
+  store.set("skills", skills);
+  $("skill-name").value = "";
+  $("skill-text").value = "";
+  $("skill-form").hidden = true;
+  renderSide();
+};
+$("side-skills").onclick = (e) => {
+  const x = e.target.closest("[data-skill-x]");
+  if (x) {
+    const id = x.dataset.skillX;
+    skills = skills.filter((s) => s.id !== id);
+    store.set("skills", skills);
+    renderSide();
+    return;
+  }
+  const hit = e.target.closest("[data-skill]");
+  if (!hit) return;
+  const cur = currentChat();
+  const picked = skills.find((s) => s.id === hit.dataset.skill);
+  if (!cur || !picked) return;
+  cur.skill = cur.skill && cur.skill.id === picked.id ? null : {id: picked.id, name: picked.name, text: picked.text};
+  store.set("chats", chats);
+  renderSide();
 };
 $("export-btn").onclick = () => {
   if (!messages.length) { toast("info", "Nothing to save yet"); return; }
@@ -1139,6 +1263,8 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("drawe
 // ------------------------------------------------------------------ start
 setBusy(false);
 renderChat();
+renderSide();
+$("lang-btn").addEventListener("click", () => renderSide());
 const startQuestion = new URLSearchParams(location.search).get("q");   // /?q=... starts a chat (a shortcut)
 if (startQuestion) history.replaceState(null, "", location.pathname + location.hash);
 loadHealth().then(loadMcp).then(() => { if (startQuestion) { $("input").value = startQuestion; send(); } });

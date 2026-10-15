@@ -17,6 +17,30 @@ main { flex: 1; min-height: 0; display: flex; }
 .st-ver { font-size: var(--st-fs-xs); color: var(--st-ink-muted); font-variant-numeric: tabular-nums; padding-right: 0.35rem; }
 html[data-i18n-pending] body { visibility: hidden; }
 
+/* ---------------------------------------------------------------- sidebar */
+.view--chat { flex-direction: row; }
+.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.side { width: 248px; flex: none; display: flex; flex-direction: column; gap: 2px;
+        padding: var(--st-s-3); border-right: 1px solid var(--st-line-soft); background: var(--st-bg);
+        overflow: auto; }
+.side-new, .side-item { width: 100%; text-align: left; border: 0; background: transparent; color: var(--st-ink);
+        border-radius: 8px; padding: 7px 10px; font: inherit; font-size: var(--st-fs-sm); cursor: pointer; }
+.side-new { font-weight: 650; }
+.side-new:hover, .side-item:hover { background: var(--st-surface-2); }
+.side-item[aria-current="true"] { background: var(--st-surface-2); }
+.side-label { display: flex; align-items: center; gap: 6px; margin: 14px 10px 4px; color: var(--st-ink-muted);
+        font-size: var(--st-fs-xs); font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.side-plus { margin-left: auto; border: 0; background: transparent; color: var(--st-ink); font: inherit;
+        font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; }
+.side-list { display: flex; flex-direction: column; gap: 1px; }
+.side-item { display: flex; align-items: center; gap: 6px; }
+.side-item__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-item__meta { color: var(--st-ink-muted); font-size: var(--st-fs-xs); overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; max-width: 72px; }
+.side-item__x { border: 0; background: transparent; color: var(--st-ink-muted); cursor: pointer; padding: 0 2px; }
+.skill-form { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
+.skill-form .st-input, .skill-form textarea { width: 100%; font: inherit; font-size: var(--st-fs-sm); }
+
 /* ---------------------------------------------------------------- chat */
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .chat { max-width: 860px; margin: 0 auto; padding: var(--st-s-8) var(--st-s-6) var(--st-s-6); display: flex;
