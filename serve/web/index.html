@@ -59,9 +59,8 @@
       <div class="side-list" id="side-chats" data-i18n-skip></div>
       <div class="side-label">Skills<button type="button" class="side-plus" id="skill-add" title="Add a skill" aria-label="Add a skill">+</button></div>
       <form class="skill-form" id="skill-form" hidden>
-        <input class="st-input" id="skill-name" placeholder="Skill name" aria-label="Skill name" maxlength="40">
-        <textarea class="st-input" id="skill-text" rows="4" placeholder="What this skill should make the model do" aria-label="What this skill should make the model do"></textarea>
-        <button type="submit" class="st-btn st-btn--primary">Save skill</button>
+        <input class="st-input" id="skill-url" placeholder="https://github.com/owner/repo" aria-label="GitHub skill URL" autocomplete="off">
+        <button type="submit" class="st-btn st-btn--primary" id="skill-save">Add skill</button>
       </form>
       <div class="side-list" id="side-skills" data-i18n-skip></div>
     </aside>
